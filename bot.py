@@ -1,7 +1,7 @@
 import os
 import requests
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
 CHAT_ID = os.environ.get("CHAT_ID", "")
@@ -13,11 +13,16 @@ TECH_SOURCES = "the-verge,techcrunch,wired,ars-technica,hacker-news,engadget"
 
 def fetch_real_news():
     articles = []
+    # هنجيب أخبار الـ 7 أيام اللي فاتت بس عشان التريندات
+    seven_days_ago = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+    
+    # كلمات بحث أقوى للتريندات والشركات الكبيرة
     queries = [
-        ("AI LLM model release", TECH_SOURCES),
-        ("programming developer tools github", TECH_SOURCES),
-        ("artificial intelligence breakthrough", TECH_SOURCES),
+        ("OpenAI OR Google OR Meta AI breakthrough", TECH_SOURCES),
+        ("Nvidia OR AI GPU news", TECH_SOURCES),
+        ("major AI model release LLM", TECH_SOURCES),
     ]
+    
     for q, sources in queries:
         url = "https://newsapi.org/v2/everything"
         params = {
@@ -25,17 +30,21 @@ def fetch_real_news():
             "q": q,
             "sources": sources,
             "language": "en",
-            "sortBy": "publishedAt",
-            "pageSize": 3,
+            "from": seven_days_ago,
+            "sortBy": "popularity", # عشان نجيب الأخبار اللي عليها تفاعل عالي بس
+            "pageSize": 5, 
         }
         res = requests.get(url, params=params)
         data = res.json()
+        
         print(f"Query '{q}': status={data.get('status')}, total={data.get('totalResults')}")
+        
         for a in data.get("articles", []):
             title = a.get("title", "")
             article_url = a.get("url", "")
             source = a.get("source", {}).get("name", "")
             desc = a.get("description", "")
+            
             if title and "[Removed]" not in title and article_url.startswith("http"):
                 articles.append({
                     "title": title,
@@ -43,7 +52,17 @@ def fetch_real_news():
                     "source": source,
                     "description": desc or title
                 })
-    return articles[:9]
+                
+    # مسح الأخبار المكررة
+    seen_titles = set()
+    unique_articles = []
+    for art in articles:
+        if art['title'] not in seen_titles:
+            unique_articles.append(art)
+            seen_titles.add(art['title'])
+            
+    # نرجع أفضل 10 أخبار بس للـ AI عشان يختار منهم الخلاصة
+    return unique_articles[:10]
 
 def ask_gemini(news_list, retries=4, delay=15):
     today = datetime.now().strftime("%A, %d %B %Y")
@@ -53,26 +72,29 @@ def ask_gemini(news_list, retries=4, delay=15):
         news_text += f"{i}. TITLE: {n['title']}\n   SOURCE: {n['source']}\n   URL: {n['url']}\n   DESC: {n['description']}\n\n"
 
     prompt = f"""
-انت صاحبي المصري الجن زد. دي أخبار تقنية وAI حقيقية من النهارده {today}:
+أنت خبير تقني وصايع في التريندات. دي أخبار الأسبوع اللي فات {today}:
 
 {news_text}
 
-اختار أهم 5 أخبار واكتبهم بالعربي بأسلوب مصري جن زد مضحك مع ايموجي.
+المهمة:
+نقي أقوى 5 أخبار عملوا ضجة بجد (The Real Hits). فكك من الأخبار المملة أو التحديثات الصغيرة.
+اكتبهم بأسلوب جن زد مصري "تنين"، حسسني إن دي أهم حاجة حصلت في الكوكب الأسبوع ده.
 
-قواعد:
-- أخبار تقنية وAI وكودينج بس — لو لقيت خبر رياضي أو سياسي تجاهله
-- لا تغير أي معلومة — الأسماء والأحداث لازم تبقى صح بالظبط
-- الـ URL لكل خبر خده بالظبط من اللي فوق — مش تغير فيه حرف
+القواعد:
+- أخبار تقنية وAI وكودينج بس — لو لقيت خبر رياضي أو سياسي تجاهله.
+- ركز على الحاجات الكبيرة: (Nvidia, OpenAI, Google, Apple AI, New Models).
+- لا تغير أي معلومة — الأسماء والأحداث لازم تبقى صح بالظبط.
+- الـ URL لكل خبر خده بالظبط من اللي فوق — مش تغير فيه حرف.
 
 الفورمات:
-[مقدمة مصرية خفيفة سطر واحد بس]
+[مقدمة مصرية خفيفة سطر واحد بس عن تريندات الأسبوع]
 
-🔥 *1. عنوان بالعربي*
-شرح سطرين جن زد
-🔗 اسم المصدر: URL_هنا
+🔥 *1. [عنوان بالعربي]*
+[شرح سطرين بلهجة الشارع المصري للأهمية]
+🔗 المصدر: URL_هنا
 
 وهكذا لحد 5.
-_ديلي ترندز بتاعتك — {today}_ 🤖
+_أجمد تريندات الأسبوع — {today}_ 🤖
 """
 
     url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
@@ -102,11 +124,12 @@ _ديلي ترندز بتاعتك — {today}_ 🤖
 
 def build_fallback(articles):
     today = datetime.now().strftime("%A, %d %B %Y")
-    lines = [f"📲 *أخبار التك النهارده — {today}*\n━━━━━━━━━━━━━━━━━━━\n"]
+    lines = [f"📲 *تريندات التك الأسبوع ده — {today}*\n━━━━━━━━━━━━━━━━━━━\n"]
     emojis = ["🔥", "💻", "🤖", "⚡", "🚀"]
     for i, a in enumerate(articles[:5]):
-        lines.append(f"{emojis[i]} *{a['title']}*\n{a['source']}: {a['url']}\n")
-    lines.append(f"_ديلي ترندز بتاعتك — {today}_ 🤖")
+        emoji = emojis[i] if i < len(emojis) else "🔥"
+        lines.append(f"{emoji} *{a['title']}*\n{a['source']}: {a['url']}\n")
+    lines.append(f"_أجمد تريندات الأسبوع — {today}_ 🤖")
     return "\n".join(lines)
 
 def send_message(text):
@@ -127,9 +150,9 @@ def send_message(text):
         print("Telegram retry status:", res.status_code)
 
 def main():
-    print("Fetching tech/AI news...")
+    print("Fetching weekly tech/AI hit news...")
     articles = fetch_real_news()
-    print(f"Got {len(articles)} articles")
+    print(f"Got {len(articles)} unique articles")
 
     if not articles:
         send_message("❌ مفيش أخبار اتجبت النهارده — شوف الـ logs")
@@ -139,7 +162,7 @@ def main():
     digest = ask_gemini(articles)
 
     if digest:
-        header = "📲 *ايه اللي الناس بتتكلم فيه النهارده؟*\n━━━━━━━━━━━━━━━━━━━\n\n"
+        header = "📲 *تريندات التك اللي قلبت الدنيا الأسبوع ده!*\n━━━━━━━━━━━━━━━━━━━\n\n"
         send_message(header + digest)
         print("Sent!")
     else:
