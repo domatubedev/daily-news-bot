@@ -11,15 +11,14 @@ NEWS_API_KEY = os.environ.get("NEWS_API_KEY", "")
 
 def fetch_real_news():
     articles = []
-    # هنجيب أخبار آخر 3 أيام عشان نضمن إنها لسه "تريند"
     days_back = (datetime.now() - timedelta(days=3)).strftime('%Y-%m-%d')
     
-    # ميكس البحث الجديد: تك + جيمنج + سياسة وحروب
-    # بنستخدم الـ OR عشان نوسع نطاق البحث في طلب واحد
+    # 1. كلمات بحث محددة جداً (Strict Queries)
+    # ضفنا "NOT sports" عشان نهرب من وجع الدماغ ده
     queries = [
-        "AI OR Nvidia OR OpenAI OR ChatGPT OR " + 
-        "Minecraft update OR PUBG Mobile news OR " + 
-        "Iran USA conflict OR Lebanon war news OR Gaza"
+        "(AI OR Nvidia OR OpenAI OR ChatGPT) AND (breakthrough OR release) -sports",
+        "(Minecraft OR 'PUBG Mobile') AND (update OR leaks OR season) -sports",
+        "(Iran OR Israel OR Lebanon OR US Army OR war OR conflict) -football -nfl"
     ]
     
     for q in queries:
@@ -29,36 +28,29 @@ def fetch_real_news():
             "q": q,
             "language": "en",
             "from": days_back,
-            "sortBy": "popularity", # السر في إننا بنجيب الـ Hits
-            "pageSize": 20, # بنسحب عدد كبير عشان نفلتر براحتنا
+            "sortBy": "relevancy", # غيرنا لـ relevancy عشان نضمن إنه يلتزم بكلمات البحث بتاعتك
+            "pageSize": 15,
         }
         
         try:
             res = requests.get(url, params=params)
             data = res.json()
-            
-            if data.get("status") != "ok":
-                print(f"Error fetching: {data.get('message')}")
-                continue
-
-            for a in data.get("articles", []):
-                title = a.get("title", "")
-                url_link = a.get("url", "")
-                source = a.get("source", {}).get("name", "")
-                desc = a.get("description", "")
-                
-                # استبعاد الأخبار المحذوفة أو الفارغة
-                if title and "[Removed]" not in title and url_link.startswith("http"):
-                    articles.append({
-                        "title": title,
-                        "url": url_link,
-                        "source": source,
-                        "description": desc or title
-                    })
+            if data.get("status") == "ok":
+                for a in data.get("articles", []):
+                    title = a.get("title", "").lower()
+                    # فلتر إضافي بالبايثون عشان نقتل أي خبر رياضي تماماً
+                    bad_words = ["nfl", "draft", "football", "match", "score", "player"]
+                    if not any(word in title for word in bad_words):
+                        articles.append({
+                            "title": a.get("title"),
+                            "url": a.get("url"),
+                            "source": a.get("source", {}).get("name"),
+                            "description": a.get("description", "")
+                        })
         except Exception as e:
-            print(f"Request error: {e}")
+            print(f"Error: {e}")
 
-    # إزالة التكرار بناءً على العنوان
+    # مسح المكرر
     seen_titles = set()
     unique_articles = []
     for art in articles:
@@ -66,8 +58,8 @@ def fetch_real_news():
             unique_articles.append(art)
             seen_titles.add(art['title'].lower())
             
-    return unique_articles[:15]
-
+    # رجع أهم 10
+    return unique_articles[:10]
 def ask_gemini(news_list, retries=3, delay=10):
     today = datetime.now().strftime("%A, %d %B %Y")
     news_text = ""
