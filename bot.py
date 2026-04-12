@@ -7,22 +7,25 @@ CHAT_ID = os.environ.get("CHAT_ID", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 def ask_gemini(prompt):
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+    print(f"API Key present: {'YES' if GEMINI_API_KEY else 'NO'}")
+    print(f"API Key length: {len(GEMINI_API_KEY)}")
+    print(f"API Key preview: {GEMINI_API_KEY[:8]}..." if GEMINI_API_KEY else "EMPTY")
+
+    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+    headers = {"Content-Type": "application/json"}
+    params = {"key": GEMINI_API_KEY}
     payload = {
-        "contents": [
-            {
-                "parts": [{"text": prompt}]
-            }
-        ]
+        "contents": [{"parts": [{"text": prompt}]}]
     }
-    res = requests.post(url, json=payload)
-    data = res.json()
+    res = requests.post(url, json=payload, headers=headers, params=params)
     print("Gemini status:", res.status_code)
+    print("Gemini response:", res.text[:500])
+    data = res.json()
     try:
         return data["candidates"][0]["content"]["parts"][0]["text"]
     except Exception as e:
-        print("Gemini error:", data)
-        return "مفيش ترندات اليوم يسطا 😭"
+        print("Gemini parse error:", e)
+        return None
 
 def send_message(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -54,22 +57,20 @@ def main():
 🔥 *1. [اسم الترند]*
 [شرح بسيط بأسلوب جن زد مصري في سطرين]
 
-🔥 *2. [اسم الترند]*
-[شرح]
-
 وهكذا لحد 5 ترندات.
 
-في الاخر حط السطر ده بالظبط:
+في الاخر حط السطر ده:
 _ديلي ترندز بتاعتك — {today}_ 🤖
 """
 
-    print("Asking Gemini...")
     digest = ask_gemini(prompt)
 
-    header = f"📲 *ايه اللي الناس بتتكلم فيه النهارده؟*\n━━━━━━━━━━━━━━━━━━━\n\n"
-    full_message = header + digest
+    if digest:
+        header = "📲 *ايه اللي الناس بتتكلم فيه النهارده؟*\n━━━━━━━━━━━━━━━━━━━\n\n"
+        send_message(header + digest)
+    else:
+        send_message("❌ Gemini مردتش — شوف الـ logs في GitHub Actions")
 
-    send_message(full_message)
     print("Done!")
 
 if __name__ == "__main__":
