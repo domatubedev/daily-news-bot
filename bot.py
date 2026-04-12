@@ -7,24 +7,20 @@ CHAT_ID = os.environ.get("CHAT_ID", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 def ask_gemini(prompt):
-    print(f"API Key present: {'YES' if GEMINI_API_KEY else 'NO'}")
-    print(f"API Key length: {len(GEMINI_API_KEY)}")
-    print(f"API Key preview: {GEMINI_API_KEY[:8]}..." if GEMINI_API_KEY else "EMPTY")
-
     url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
     headers = {"Content-Type": "application/json"}
     params = {"key": GEMINI_API_KEY}
     payload = {
-        "contents": [{"parts": [{"text": prompt}]}]
+        "contents": [{"parts": [{"text": prompt}]}],
+        "tools": [{"google_search": {}}]
     }
     res = requests.post(url, json=payload, headers=headers, params=params)
     print("Gemini status:", res.status_code)
-    print("Gemini response:", res.text[:500])
     data = res.json()
     try:
         return data["candidates"][0]["content"]["parts"][0]["text"]
     except Exception as e:
-        print("Gemini parse error:", e)
+        print("Gemini error:", data)
         return None
 
 def send_message(text):
@@ -42,34 +38,30 @@ def main():
     today = datetime.now().strftime("%A, %d %B %Y")
 
     prompt = f"""
-انت بتكتب رسالة يومية على تيليجرام لصاحبك المصري جن زد اللي عايز يعرف ايه اللي الناس بتتكلم فيه النهارده.
+ابحث دلوقتي على الإنترنت وجيب اكبر 5 ترندات حقيقية بتتداول النهارده {today} في العالم.
+خد الترندات من تويتر، يوتيوب، جوجل ترندز، تيك توك — حاجات حقيقية الناس بتتكلم فيها دلوقتي فعلاً.
 
-التاريخ النهارده: {today}
+اكتب كل ترند بالعربي بأسلوب مصري جن زد خفيف ومضحك مع ايموجي كتير.
+متكتبش مقدمة — ابدأ مباشرة بالترندات.
 
-المطلوب منك:
-1. اجيب اكبر 5 ترندات حقيقية بتتداول دلوقتي في العالم (تيك توك، تويتر، يوتيوب، اخبار فيروسية) — حاجات كل الناس لازم تعرفها
-2. اكتب كل حاجة بأسلوب مصري جن زد خفيف ومضحك
-3. استخدم ايموجي كتير
-4. متكتبش اي مقدمة او كلام زيادة — ابدأ مباشرة بالترندات
-5. الرسالة كلها بالعربي
+الفورمات:
+🔥 *1. [اسم الترند الحقيقي]*
+[شرح بسيط في سطرين بأسلوب جن زد مصري]
 
-الفورمات يكون كده:
-🔥 *1. [اسم الترند]*
-[شرح بسيط بأسلوب جن زد مصري في سطرين]
+وهكذا لحد 5.
 
-وهكذا لحد 5 ترندات.
-
-في الاخر حط السطر ده:
+في الاخر:
 _ديلي ترندز بتاعتك — {today}_ 🤖
 """
 
+    print("Asking Gemini with Google Search...")
     digest = ask_gemini(prompt)
 
     if digest:
         header = "📲 *ايه اللي الناس بتتكلم فيه النهارده؟*\n━━━━━━━━━━━━━━━━━━━\n\n"
         send_message(header + digest)
     else:
-        send_message("❌ Gemini مردتش — شوف الـ logs في GitHub Actions")
+        send_message("❌ حصل error — شوف الـ logs")
 
     print("Done!")
 
