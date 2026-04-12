@@ -1,5 +1,6 @@
 import os
 import requests
+import time
 from datetime import datetime
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
@@ -35,7 +36,7 @@ def fetch_real_news():
                 })
     return articles[:9]
 
-def ask_gemini(news_list):
+def ask_gemini(news_list, retries=4, delay=15):
     today = datetime.now().strftime("%A, %d %B %Y")
 
     news_text = ""
@@ -54,16 +55,12 @@ def ask_gemini(news_list):
 - بس غير الأسلوب يبقى مصري خفيف
 - الـ URL لكل خبر خده بالظبط من اللي فوق — مش تغير فيه حرف
 
-الفورمات بالظبط ده — مفيش حاجة تانية:
+الفورمات:
 🔥 *1. عنوان بالعربي*
 شرح سطرين جن زد
 🔗 اسم المصدر: URL_هنا
 
-🔥 *2. عنوان بالعربي*
-شرح سطرين جن زد
-🔗 اسم المصدر: URL_هنا
-
-وهكذا لحد 5 بس.
+وهكذا لحد 5.
 _ديلي ترندز بتاعتك — {today}_ 🤖
 """
 
@@ -75,14 +72,23 @@ _ديلي ترندز بتاعتك — {today}_ 🤖
         "generationConfig": {"maxOutputTokens": 1500, "temperature": 0.5}
     }
 
-    try:
-        res = requests.post(url, json=payload, headers=headers, params=params, timeout=30)
-        print("Gemini status:", res.status_code)
-        data = res.json()
-        return data["candidates"][0]["content"]["parts"][0]["text"]
-    except Exception as e:
-        print("Gemini error:", e)
-        return None
+    for attempt in range(1, retries + 1):
+        try:
+            print(f"Gemini attempt {attempt}/{retries}...")
+            res = requests.post(url, json=payload, headers=headers, params=params, timeout=30)
+            print(f"Gemini status: {res.status_code}")
+            if res.status_code == 503:
+                print(f"503 - waiting {delay}s before retry...")
+                time.sleep(delay)
+                continue
+            data = res.json()
+            return data["candidates"][0]["content"]["parts"][0]["text"]
+        except Exception as e:
+            print(f"Gemini error on attempt {attempt}: {e}")
+            time.sleep(delay)
+
+    print("All Gemini attempts failed.")
+    return None
 
 def build_fallback(articles):
     today = datetime.now().strftime("%A, %d %B %Y")
@@ -94,9 +100,8 @@ def build_fallback(articles):
     return "\n".join(lines)
 
 def send_message(text):
-    # split if too long
     if len(text) > 4000:
-        text = text[:4000] + "\n\n_... اتقصر عشان تيليجرام مش بيحب الطول_ 😅"
+        text = text[:4000] + "\n\n_... اتقصر_ 😅"
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {
         "chat_id": CHAT_ID,
@@ -107,7 +112,6 @@ def send_message(text):
     res = requests.post(url, json=payload)
     print("Telegram status:", res.status_code)
     if res.status_code != 200:
-        # retry without markdown
         payload["parse_mode"] = ""
         res = requests.post(url, json=payload)
         print("Telegram retry status:", res.status_code)
