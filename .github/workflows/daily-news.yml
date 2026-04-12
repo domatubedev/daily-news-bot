@@ -2,13 +2,12 @@ name: Daily News Digest
 
 on:
   schedule:
-    - cron: '0 19 * * *'  # 7PM UTC = 9PM Cairo (EET = UTC+2)
-  workflow_dispatch:       # lets you run it manually anytime
+    - cron: '0 19 * * *'
+  workflow_dispatch:
 
 jobs:
   send-news:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repo
         uses: actions/checkout@v3
