@@ -118,16 +118,16 @@ _نشرة هبد بليل - {today}_ 🤖
 def send_message(text):
     if not text: return
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    # تقسيم الرسالة لو طويلة جداً
-    if len(text) > 4000: text = text[:4000] + "..."
-    
     payload = {
         "chat_id": CHAT_ID,
         "text": text,
         "parse_mode": "Markdown",
         "disable_web_page_preview": True
     }
-    requests.post(url, json=payload)
+    res = requests.post(url, json=payload)
+    if res.status_code != 200:
+        print(f"Telegram Error: {res.status_code}")
+        print(f"Response: {res.text}") # ده هيقولك بالظبط ليه تليجرام رفض الرسالة
 
 def main():
     print("Fetching the hits...")
