@@ -1,31 +1,29 @@
-name: Daily Tech Trends Bot
+name: Daily Trends Bot
 
 on:
   schedule:
-    # 20:20 UTC = 10:20 PM Cairo time (GMT+2)
-    # ملاحظة: GitHub بيستخدم توقيت جرينتش (UTC)
     - cron: '20 20 * * *'
-  workflow_dispatch: # زرار تشغيل يدوي للتجربة
+  workflow_dispatch:
 
 jobs:
-  run-bot:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
+      - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
 
-      - name: Install Dependencies
+      - name: Install dependencies
         run: pip install requests
 
-      - name: Run Script
+      - name: Run Bot
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           NEWS_API_KEY: ${{ secrets.NEWS_API_KEY }}
-        run: python your_script_name.py # غير ده لاسم ملف البايثون بتاعك
+        run: python bot.py
