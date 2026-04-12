@@ -69,7 +69,7 @@ _ديلي ترندز بتاعتك — {today}_ 🤖
     params = {"key": GEMINI_API_KEY}
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"maxOutputTokens": 1500, "temperature": 0.5}
+        "generationConfig": {"maxOutputTokens": 10000, "temperature": 0.5}
     }
 
     for attempt in range(1, retries + 1):
@@ -100,8 +100,8 @@ def build_fallback(articles):
     return "\n".join(lines)
 
 def send_message(text):
-    if len(text) > 4000:
-        text = text[:4000] + "\n\n_... اتقصر_ 😅"
+    if len(text) > 4096:
+        text = text[:4096] + "\n\n_... اتقصر_ 😅"
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {
         "chat_id": CHAT_ID,
