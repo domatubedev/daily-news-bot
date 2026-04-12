@@ -16,7 +16,7 @@ def fetch_real_news():
     # استعلامات بحث قوية وشاملة مع استبعاد الرياضة تماماً
     queries = [
         "(AI OR Nvidia OR OpenAI OR ChatGPT OR Claude OR LLM) -sports -football",
-        "(Minecraft OR 'PUBG Mobile' OR 'Warzone Mobile' OR Gaming) -sports",
+        "(Minecraft OR 'PUBG Mobile' OR Gaming) -sports",
         "(Iran OR Lebanon OR Israel OR USA OR 'Middle East' OR conflict OR war) -NFL -FIFA"
     ]
     
@@ -88,7 +88,7 @@ def ask_gemini(news_list, retries=3, delay=10):
 _نشرة تريندات الأسبوع - {today}_ 🤖
 """
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemma-4-31b:generateContent?key={GEMINI_API_KEY}"
     headers = {"Content-Type": "application/json"}
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
