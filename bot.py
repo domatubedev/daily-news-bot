@@ -15,18 +15,21 @@ BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
 USERS_FILE = "users.json"
 
-AVAILABLE_TOPICS = {
+# Built-in topic suggestions (label + search query)
+BUILTIN_TOPICS = {
     "ai":        {"label": "🤖 AI & Tech",       "query": "(AI OR Nvidia OR OpenAI OR ChatGPT OR Claude OR LLM OR 'artificial intelligence')"},
     "gaming":    {"label": "🎮 Gaming",           "query": "(Gaming OR Minecraft OR 'PUBG Mobile' OR Steam OR PlayStation OR Xbox)"},
     "politics":  {"label": "🌍 World & Politics", "query": "(Iran OR Lebanon OR Israel OR USA OR 'Middle East' OR conflict OR war OR politics)"},
     "minecraft": {"label": "⛏️ Minecraft",        "query": "Minecraft (update OR mod OR snapshot OR cave OR biome)"},
     "pubg":      {"label": "🔫 PUBG Mobile",      "query": "('PUBG Mobile' OR BGMI OR battlegrounds) (update OR season OR meta OR patch)"},
+    "crypto":    {"label": "💰 Crypto",           "query": "(Bitcoin OR Ethereum OR crypto OR blockchain OR altcoin)"},
+    "science":   {"label": "🔬 Science & Space",  "query": "(NASA OR SpaceX OR science OR discovery OR space OR physics)"},
+    "egypt":     {"label": "🇪🇬 Egypt",            "query": "(Egypt OR Cairo OR Egyptian) -football -soccer"},
 }
 
-DEFAULT_TOPICS = ["ai", "gaming", "politics"]
-
-# in-memory set of users currently waiting to type their schedule time
+# in-memory states
 AWAITING_SCHEDULE: set = set()
+AWAITING_CUSTOM_TOPIC: set = set()
 
 def load_users() -> dict:
     if os.path.exists(USERS_FILE):
@@ -41,51 +44,31 @@ def save_users(users: dict):
 # ─── TIME PARSER ──────────────────────────────────────────────────────────────
 
 def parse_schedule_input(text: str):
-    """
-    Accepts: '10:00PM', '9:30am', '11:00 PM', '23:00', '9PM', '9 AM'
-    Returns HH:MM (24h) string, or None if invalid.
-    """
     t = text.strip().upper().replace(" ", "")
-
-    # HH:MM AM/PM  e.g. 10:00PM
     m = re.fullmatch(r'(\d{1,2}):(\d{2})(AM|PM)', t)
     if m:
         h, mn, period = int(m.group(1)), int(m.group(2)), m.group(3)
-        if not (1 <= h <= 12 and 0 <= mn <= 59):
-            return None
-        if period == "AM":
-            h = 0 if h == 12 else h
-        else:
-            h = 12 if h == 12 else h + 12
+        if not (1 <= h <= 12 and 0 <= mn <= 59): return None
+        h = 0 if (period == "AM" and h == 12) else h
+        h = 12 if (period == "PM" and h == 12) else (h + 12 if period == "PM" else h)
         return f"{h:02d}:{mn:02d}"
-
-    # H AM/PM  e.g. 9PM
     m = re.fullmatch(r'(\d{1,2})(AM|PM)', t)
     if m:
         h, period = int(m.group(1)), m.group(2)
-        if not (1 <= h <= 12):
-            return None
-        if period == "AM":
-            h = 0 if h == 12 else h
-        else:
-            h = 12 if h == 12 else h + 12
+        if not (1 <= h <= 12): return None
+        h = 0 if (period == "AM" and h == 12) else h
+        h = 12 if (period == "PM" and h == 12) else (h + 12 if period == "PM" else h)
         return f"{h:02d}:00"
-
-    # 24h  e.g. 23:00
     m = re.fullmatch(r'(\d{1,2}):(\d{2})', t)
     if m:
         h, mn = int(m.group(1)), int(m.group(2))
-        if 0 <= h <= 23 and 0 <= mn <= 59:
-            return f"{h:02d}:{mn:02d}"
-
+        if 0 <= h <= 23 and 0 <= mn <= 59: return f"{h:02d}:{mn:02d}"
     return None
 
 # ─── TELEGRAM HELPERS ─────────────────────────────────────────────────────────
 
 def send_message(chat_id: int, text: str, reply_markup=None):
-    if not text:
-        return
-    url = f"{BASE_URL}/sendMessage"
+    if not text: return
     chunks = [text[i:i+4000] for i in range(0, len(text), 4000)]
     for i, chunk in enumerate(chunks):
         payload = {
@@ -97,9 +80,24 @@ def send_message(chat_id: int, text: str, reply_markup=None):
         if reply_markup and i == len(chunks) - 1:
             payload["reply_markup"] = reply_markup
         try:
-            requests.post(url, json=payload, timeout=15)
+            requests.post(f"{BASE_URL}/sendMessage", json=payload, timeout=15)
         except Exception as e:
             print(f"[send_message error] {e}")
+
+def edit_message(chat_id: int, message_id: int, text: str, reply_markup=None):
+    payload = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "text": text,
+        "parse_mode": "Markdown",
+        "disable_web_page_preview": True,
+    }
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+    try:
+        requests.post(f"{BASE_URL}/editMessageText", json=payload, timeout=10)
+    except Exception as e:
+        print(f"[edit_message error] {e}")
 
 def answer_callback(callback_query_id: str, text: str = "✅"):
     try:
@@ -119,18 +117,50 @@ def get_updates(offset: int):
         print(f"[get_updates error] {e}")
         return []
 
-# ─── INLINE KEYBOARD (topics only) ───────────────────────────────────────────
+# ─── TOPICS KEYBOARD ─────────────────────────────────────────────────────────
 
 def topics_keyboard(user_topics: list) -> dict:
+    """
+    Shows:
+    - Built-in topics as toggle buttons (✅/☑️)
+    - User's custom topics as removable buttons
+    - ➕ Add custom topic button
+    - 💾 Save button
+    """
     buttons = []
-    for key, info in AVAILABLE_TOPICS.items():
+
+    # Built-in topics
+    for key, info in BUILTIN_TOPICS.items():
         tick = "✅ " if key in user_topics else "☑️ "
         buttons.append([{"text": tick + info["label"],
                           "callback_data": f"topic_{key}"}])
-    buttons.append([{"text": "💾 حفظ التوبيكس", "callback_data": "topics_save"}])
+
+    # Custom topics (ones not in BUILTIN_TOPICS)
+    custom = [t for t in user_topics if t not in BUILTIN_TOPICS]
+    for ct in custom:
+        buttons.append([{"text": f"✅ 🔖 {ct}  ❌ remove",
+                          "callback_data": f"removetopic_{ct}"}])
+
+    # Add custom + Save
+    buttons.append([{"text": "➕ Add custom topic", "callback_data": "topic_add_custom"}])
+    buttons.append([{"text": "💾 Save topics", "callback_data": "topics_save"}])
+
     return {"inline_keyboard": buttons}
 
+def topics_message_text(user_topics: list) -> str:
+    count = len(user_topics)
+    return (f"🎯 *Choose your topics* ({count} selected)\n\n"
+            "Toggle built-in topics or add your own custom ones.\n"
+            "Custom topics = any keyword you want (e.g. `Tesla`, `Lebanon`, `Anime`)")
+
 # ─── NEWS & AI ────────────────────────────────────────────────────────────────
+
+def build_query_for_topic(topic_key: str) -> str:
+    """Returns search query for a topic — built-in or custom."""
+    if topic_key in BUILTIN_TOPICS:
+        return BUILTIN_TOPICS[topic_key]["query"]
+    # For custom topics, just search the keyword directly
+    return topic_key
 
 def fetch_news_for_topics(topic_keys: list) -> list:
     articles = []
@@ -139,20 +169,17 @@ def fetch_news_for_topics(topic_keys: list) -> list:
                  "cricket", "tennis", "golf", "olympics"]
 
     for key in topic_keys:
-        info = AVAILABLE_TOPICS.get(key)
-        if not info:
-            continue
+        query = build_query_for_topic(key)
         params = {
             "apiKey": NEWS_API_KEY,
-            "q": info["query"],
+            "q": query,
             "language": "en",
             "from": one_week_ago,
             "sortBy": "popularity",
-            "pageSize": 15,
+            "pageSize": 10,
         }
         try:
-            res = requests.get("https://newsapi.org/v2/everything",
-                               params=params, timeout=15)
+            res = requests.get("https://newsapi.org/v2/everything", params=params, timeout=15)
             data = res.json()
             if data.get("status") == "ok":
                 for a in data.get("articles", []):
@@ -185,9 +212,7 @@ def ask_gemini(news_list: list, topic_keys: list):
                       f"   SOURCE: {n['source']}  |  URL: {n['url']}\n"
                       f"   DESC: {n['description']}\n\n")
 
-    topics_ar = {"ai":"AI والتكنولوجيا","gaming":"جيمنج","politics":"سياسة وعالم",
-                 "minecraft":"ماينكرافت","pubg":"ببجي موبايل"}
-    topics_label = " / ".join([topics_ar.get(k, k) for k in topic_keys])
+    topics_label = " / ".join(topic_keys)
 
     prompt = f"""
 أنت خبير تريندات وجن زد مصري. دي أخبار الأسبوع اللي فات في المواضيع دي: {topics_label}
@@ -213,7 +238,7 @@ _نشرة تريندات - {today}_ 🤖
 """
 
     url = (f"https://generativelanguage.googleapis.com/v1beta/"
-           f"models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}")
+           f"models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}")
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"maxOutputTokens": 20000, "temperature": 0.7},
@@ -236,7 +261,11 @@ _نشرة تريندات - {today}_ 🤖
 def send_digest_to_user(user_id: str, users: dict):
     user    = users[user_id]
     chat_id = user["chat_id"]
-    topics  = user.get("topics", DEFAULT_TOPICS)
+    topics  = user.get("topics", [])
+
+    if not topics:
+        send_message(chat_id, "❌ مش عندك أي topics! ابعت /topics عشان تختار.")
+        return
 
     send_message(chat_id, "⏳ بجيب الأخبار وبشيلها على Gemini... استنا ثواني 🤙")
 
@@ -261,7 +290,7 @@ def handle_start(chat_id: int, first_name: str, user_id: str, users: dict):
         users[user_id] = {
             "chat_id":        chat_id,
             "first_name":     first_name,
-            "topics":         DEFAULT_TOPICS.copy(),
+            "topics":         [],
             "schedule_time":  None,
             "last_sent_date": None,
         }
@@ -271,7 +300,7 @@ def handle_start(chat_id: int, first_name: str, user_id: str, users: dict):
                "هبعتلك خلاصة أهم أخبار الأسبوع في المواضيع اللي تختارها!\n\n"
                "الأوامر المتاحة:\n"
                "• /news — ابعت نشرة دلوقتي 🔥\n"
-               "• /topics — اختار مواضيعك 🎯\n"
+               "• /topics — اختار أو أضف مواضيعك 🎯\n"
                "• /schedule — حدد وقت إرسال يومي ⏰\n"
                "• /settings — شوف إعداداتك الحالية ⚙️\n\n"
                "ابدأ بـ /topics عشان تحدد اللي يهمك!")
@@ -285,15 +314,18 @@ def handle_news(chat_id: int, user_id: str, users: dict):
     if user_id not in users:
         send_message(chat_id, "أبدأ بـ /start الأول يا بشمهندس 😅")
         return
+    if not users[user_id].get("topics"):
+        send_message(chat_id, "مش عندك topics! ابعت /topics الأول 🎯")
+        return
     threading.Thread(target=send_digest_to_user, args=(user_id, users), daemon=True).start()
 
 def handle_topics(chat_id: int, user_id: str, users: dict):
     if user_id not in users:
         send_message(chat_id, "أبدأ بـ /start الأول 🙏")
         return
-    user_topics = users[user_id].get("topics", DEFAULT_TOPICS)
+    user_topics = users[user_id].get("topics", [])
     send_message(chat_id,
-                 "اختار المواضيع اللي تحب تاخد أخبارها ✅ = متفعل:",
+                 topics_message_text(user_topics),
                  reply_markup=topics_keyboard(user_topics))
 
 def handle_schedule(chat_id: int, user_id: str, users: dict):
@@ -317,11 +349,18 @@ def handle_settings(chat_id: int, user_id: str, users: dict):
         send_message(chat_id, "أبدأ بـ /start الأول 🙏")
         return
     user = users[user_id]
-    topics_labels = [AVAILABLE_TOPICS[k]["label"] for k in user.get("topics", []) if k in AVAILABLE_TOPICS]
+    topics = user.get("topics", [])
+    topics_display = []
+    for t in topics:
+        if t in BUILTIN_TOPICS:
+            topics_display.append(BUILTIN_TOPICS[t]["label"])
+        else:
+            topics_display.append(f"🔖 {t}")
     sched = user.get("schedule_time") or "مش متفعلة"
     last  = user.get("last_sent_date") or "لسه متبعتلكش حاجة"
     msg = (f"⚙️ *إعداداتك يا {user['first_name']}*\n\n"
-           f"🎯 *المواضيع:*\n" + "\n".join(f"  • {l}" for l in topics_labels) + "\n\n"
+           f"🎯 *المواضيع ({len(topics)}):*\n" +
+           "\n".join(f"  • {l}" for l in topics_display) + "\n\n"
            f"⏰ *وقت الإرسال:* {sched}\n"
            f"📅 *آخر نشرة:* {last}\n\n"
            "عدّل بـ /topics أو /schedule")
@@ -331,13 +370,11 @@ def handle_settings(chat_id: int, user_id: str, users: dict):
 
 def handle_schedule_input(chat_id: int, user_id: str, text: str, users: dict):
     AWAITING_SCHEDULE.discard(user_id)
-
     if text.lower().strip() == "off":
         users[user_id]["schedule_time"] = None
         save_users(users)
         send_message(chat_id, "🚫 الجدولة اتألغت. ابعت /news لما تحب.")
         return
-
     parsed = parse_schedule_input(text)
     if not parsed:
         send_message(chat_id,
@@ -345,7 +382,6 @@ def handle_schedule_input(chat_id: int, user_id: str, text: str, users: dict):
                      "جرب مثلاً: `10:00PM` أو `9:30AM` أو `23:00`\n"
                      "ابعت /schedule عشان تجرب تاني.")
         return
-
     users[user_id]["schedule_time"] = parsed
     save_users(users)
     send_message(chat_id,
@@ -353,11 +389,39 @@ def handle_schedule_input(chat_id: int, user_id: str, text: str, users: dict):
                  f"_(اللي ادخلته: `{text.strip()}`)_\n\n"
                  "غيّر في أي وقت بـ /schedule")
 
+# ─── CUSTOM TOPIC TEXT INPUT HANDLER ─────────────────────────────────────────
+
+def handle_custom_topic_input(chat_id: int, user_id: str, text: str, users: dict):
+    AWAITING_CUSTOM_TOPIC.discard(user_id)
+    topic = text.strip().lower()
+
+    if len(topic) < 2:
+        send_message(chat_id, "❌ الموضوع ده قصير أوي، اكتب كلمة أوضح.")
+        return
+    if len(topic) > 40:
+        send_message(chat_id, "❌ الموضوع ده طويل أوي، خليه أقل من 40 حرف.")
+        return
+
+    topics = users[user_id].get("topics", [])
+    if topic in topics:
+        send_message(chat_id, f"⚠️ `{topic}` موجود بالفعل في مواضيعك!")
+        return
+
+    topics.append(topic)
+    users[user_id]["topics"] = topics
+    save_users(users)
+
+    send_message(chat_id,
+                 f"✅ تمام! ضفت *{topic}* لمواضيعك 🎯\n\n"
+                 "ابعت /topics عشان تشوف أو تعدل مواضيعك.",
+                 reply_markup=topics_keyboard(topics))
+
 # ─── CALLBACK QUERY HANDLER ───────────────────────────────────────────────────
 
 def handle_callback(query: dict, users: dict):
     data    = query["data"]
     chat_id = query["message"]["chat"]["id"]
+    msg_id  = query["message"]["message_id"]
     user_id = str(query["from"]["id"])
     cb_id   = query["id"]
 
@@ -365,37 +429,73 @@ def handle_callback(query: dict, users: dict):
         answer_callback(cb_id, "أبدأ بـ /start الأول!")
         return
 
-    if data.startswith("topic_"):
+    # ── Toggle built-in topic ──
+    if data.startswith("topic_") and data != "topic_add_custom":
         key = data[6:]
-        if key in AVAILABLE_TOPICS:
-            topics = users[user_id].get("topics", DEFAULT_TOPICS.copy())
+        if key in BUILTIN_TOPICS:
+            topics = users[user_id].get("topics", [])
             if key in topics:
                 topics.remove(key)
-                answer_callback(cb_id, f"شيلت {AVAILABLE_TOPICS[key]['label']}")
+                answer_callback(cb_id, f"Removed {BUILTIN_TOPICS[key]['label']}")
             else:
                 topics.append(key)
-                answer_callback(cb_id, f"ضفت {AVAILABLE_TOPICS[key]['label']}")
+                answer_callback(cb_id, f"Added {BUILTIN_TOPICS[key]['label']}")
             users[user_id]["topics"] = topics
             save_users(users)
             try:
                 requests.post(f"{BASE_URL}/editMessageReplyMarkup", json={
                     "chat_id": chat_id,
-                    "message_id": query["message"]["message_id"],
+                    "message_id": msg_id,
                     "reply_markup": topics_keyboard(topics),
                 }, timeout=10)
             except Exception:
                 pass
 
+    # ── Add custom topic ──
+    elif data == "topic_add_custom":
+        answer_callback(cb_id, "اكتب الموضوع اللي عايزه")
+        AWAITING_CUSTOM_TOPIC.add(user_id)
+        send_message(chat_id,
+                     "✏️ اكتب الموضوع اللي عايز تضيفه:\n\n"
+                     "مثال: `Tesla` أو `Lebanon` أو `Anime` أو `Bitcoin`\n\n"
+                     "❌ لإلغاء ابعت /cancel")
+
+    # ── Remove custom topic ──
+    elif data.startswith("removetopic_"):
+        topic = data[12:]
+        topics = users[user_id].get("topics", [])
+        if topic in topics:
+            topics.remove(topic)
+            users[user_id]["topics"] = topics
+            save_users(users)
+            answer_callback(cb_id, f"Removed {topic}")
+            try:
+                requests.post(f"{BASE_URL}/editMessageReplyMarkup", json={
+                    "chat_id": chat_id,
+                    "message_id": msg_id,
+                    "reply_markup": topics_keyboard(topics),
+                }, timeout=10)
+            except Exception:
+                pass
+        else:
+            answer_callback(cb_id, "مش موجود!")
+
+    # ── Save ──
     elif data == "topics_save":
         topics = users[user_id].get("topics", [])
         if not topics:
             answer_callback(cb_id, "اختار موضوع واحد على الأقل!")
             return
-        answer_callback(cb_id, "✅ اتحفظ!")
-        labels = [AVAILABLE_TOPICS[k]["label"] for k in topics if k in AVAILABLE_TOPICS]
+        answer_callback(cb_id, "✅ Saved!")
+        labels = []
+        for t in topics:
+            if t in BUILTIN_TOPICS:
+                labels.append(BUILTIN_TOPICS[t]["label"])
+            else:
+                labels.append(f"🔖 {t}")
         send_message(chat_id,
-                     "✅ *اتحفظت مواضيعك:*\n" + "\n".join(f"• {l}" for l in labels) +
-                     "\n\nدلوقتي ابعت /news للنشرة 🔥")
+                     "✅ *Topics saved:*\n" + "\n".join(f"• {l}" for l in labels) +
+                     "\n\nابعت /news للنشرة 🔥")
 
 # ─── SCHEDULER THREAD ─────────────────────────────────────────────────────────
 
@@ -447,13 +547,19 @@ def main():
             first_name = msg["from"].get("first_name", "صديقي")
             text       = msg.get("text", "").strip()
 
-            # /cancel exits schedule-awaiting state
+            # /cancel
             if text.startswith("/cancel"):
                 AWAITING_SCHEDULE.discard(user_id)
+                AWAITING_CUSTOM_TOPIC.discard(user_id)
                 send_message(chat_id, "❌ اتلغت العملية.")
                 continue
 
-            # if user is mid-schedule flow, any non-command = time input
+            # awaiting custom topic input
+            if user_id in AWAITING_CUSTOM_TOPIC and not text.startswith("/"):
+                handle_custom_topic_input(chat_id, user_id, text, users)
+                continue
+
+            # awaiting schedule input
             if user_id in AWAITING_SCHEDULE and not text.startswith("/"):
                 handle_schedule_input(chat_id, user_id, text, users)
                 continue
