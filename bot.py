@@ -5,7 +5,7 @@ import time
 import json
 import threading
 from datetime import datetime, timedelta
-
+from zoneinfo import ZoneInfo  # <-- Add this line
 # ─── CONFIG ───────────────────────────────────────────────────────────────────
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
 GEMINI_API_KEY  = os.environ.get("GEMINI_API_KEY", "")
@@ -238,7 +238,7 @@ _نشرة تريندات - {today}_ 🤖
 """
 
     url = (f"https://generativelanguage.googleapis.com/v1beta/"
-           f"models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}")
+           f"models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}")
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"maxOutputTokens": 20000, "temperature": 0.7},
@@ -333,17 +333,16 @@ def handle_schedule(chat_id: int, user_id: str, users: dict):
         send_message(chat_id, "أبدأ بـ /start الأول 🙏")
         return
     current = users[user_id].get("schedule_time")
-    note = f"\n⏰ وقتك الحالي: *{current} UTC*" if current else "\n🚫 الجدولة مش شغالة دلوقتي."
+    note = f"\n⏰ وقتك الحالي: *{current} بتوقيت القاهرة*" if current else "\n🚫 الجدولة مش شغالة دلوقتي."
     AWAITING_SCHEDULE.add(user_id)
     send_message(chat_id,
                  f"اكتب الوقت اللي عايز النشرة توصلك فيه:{note}\n\n"
                  "📝 *الفورمات المقبولة:*\n"
                  "`10:00PM` أو `9:30AM` أو `23:00`\n\n"
-                 "⚠️ الوقت بتوقيت *UTC* — مصر = UTC+3\n"
-                 "يعني لو عايز 10 مساءً مصري، ابعت `7:00PM`\n\n"
+                 "🇪🇬 الوقت بتوقيت *القاهرة*\n"
+                 "يعني اكتب الوقت زي ما هو في ساعتك بالظبط.\n\n"
                  "🚫 عشان تلغي الجدولة ابعت: `off`\n"
                  "❌ عشان تلغي الأمر ابعت: /cancel")
-
 def handle_settings(chat_id: int, user_id: str, users: dict):
     if user_id not in users:
         send_message(chat_id, "أبدأ بـ /start الأول 🙏")
@@ -385,10 +384,9 @@ def handle_schedule_input(chat_id: int, user_id: str, text: str, users: dict):
     users[user_id]["schedule_time"] = parsed
     save_users(users)
     send_message(chat_id,
-                 f"✅ تمام! هبعتلك النشرة كل يوم الساعة *{parsed} UTC* 🎯\n"
+                 f"✅ تمام! هبعتلك النشرة كل يوم الساعة *{parsed} بتوقيت القاهرة* 🎯\n"
                  f"_(اللي ادخلته: `{text.strip()}`)_\n\n"
                  "غيّر في أي وقت بـ /schedule")
-
 # ─── CUSTOM TOPIC TEXT INPUT HANDLER ─────────────────────────────────────────
 
 def handle_custom_topic_input(chat_id: int, user_id: str, text: str, users: dict):
@@ -502,7 +500,10 @@ def handle_callback(query: dict, users: dict):
 def scheduler_loop():
     while True:
         try:
-            now          = datetime.utcnow()
+            # Get the current time specifically in Cairo
+            cairo_tz     = ZoneInfo("Africa/Cairo")
+            now          = datetime.now(cairo_tz)
+            
             current_time = now.strftime("%H:%M")
             today_str    = now.strftime("%Y-%m-%d")
             users        = load_users()
